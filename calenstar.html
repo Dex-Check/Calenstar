@@ -1,0 +1,1172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="CalenStar" />
+  <meta name="theme-color" content="#07071a" />
+  <title>CalenStar</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>★</text></svg>" />
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body {
+      margin: 0; padding: 0;
+      background: #040410;
+      width: 100%; height: 100%;
+      overflow: hidden;
+      font-family: 'Georgia', serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    #root { width: 100%; height: 100%; }
+    ::-webkit-scrollbar { display: none; }
+    textarea, input { -webkit-appearance: none; border-radius: 0; }
+    button { -webkit-appearance: none; }
+
+    @keyframes tdrop {
+      from { opacity:0; transform:translateY(-8px) }
+      to   { opacity:1; transform:translateY(0) }
+    }
+    @keyframes ring {
+      0%   { transform:translate(-50%,-50%) scale(.8); opacity:.7 }
+      100% { transform:translate(-50%,-50%) scale(1.7); opacity:0 }
+    }
+    @keyframes starIn {
+      from { transform:scale(0) rotate(-20deg); opacity:0 }
+      70%  { transform:scale(1.25) rotate(4deg) }
+      to   { transform:scale(1) rotate(0); opacity:1 }
+    }
+    @keyframes fadeIn {
+      from { opacity:0; transform:translateY(10px) }
+      to   { opacity:1; transform:translateY(0) }
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .view-enter { animation: fadeIn 0.25s ease forwards; }
+    .spinner { animation: spin 0.8s linear infinite; }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect } = React;
+
+// ─── Supabase ─────────────────────────────────────────────
+const SUPABASE_URL  = "https://vmnivjiwhenxkwssmdbq.supabase.co";
+const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZtbml2aml3aGVueGt3c3NtZGJxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMyODU3MzIsImV4cCI6MjA4ODg2MTczMn0.i158xG-T85Zirzfu3E0N7wU06Gt91R4E_EJSnP206pA";
+const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
+
+// ─── Helpers ──────────────────────────────────────────────
+function toKey(date) {
+  return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,"0")}-${String(date.getDate()).padStart(2,"0")}`;
+}
+function parseKey(key) {
+  const [y,m,d] = key.split("-").map(Number);
+  return new Date(y, m-1, d);
+}
+function dayLabel(key) {
+  return parseKey(key).toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"});
+}
+function getToday() { return toKey(new Date()); }
+function computeStreak(entries, todayKey) {
+  const todayLogged = !!entries[todayKey];
+  let streak = todayLogged ? 1 : 0;
+  const cur = new Date(parseKey(todayKey));
+  cur.setDate(cur.getDate() - 1);
+  while (true) {
+    const k = toKey(cur);
+    if (entries[k]) { streak++; cur.setDate(cur.getDate()-1); }
+    else break;
+  }
+  return streak;
+}
+function longestStreak(entries) {
+  const keys = Object.keys(entries).filter(k=>entries[k]).sort();
+  let best=0, cur=0, prev=null;
+  for (const k of keys) {
+    if (prev) {
+      const diff = (parseKey(k) - parseKey(prev)) / 86400000;
+      cur = diff===1 ? cur+1 : 1;
+    } else cur=1;
+    if (cur>best) best=cur;
+    prev=k;
+  }
+  return best;
+}
+function getHeaderDate() {
+  const now = new Date();
+  const dow = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][now.getDay()];
+  const mon = ["January","February","March","April","May","June","July","August","September","October","November","December"][now.getMonth()];
+  return `${dow} · ${mon} ${now.getDate()}`;
+}
+
+// ─── Constants ────────────────────────────────────────────
+const MOODS = ["🔥","✨","💪","🌙","🌱","😤","🎯","🧘","🏆","💡"];
+const CATEGORIES = [
+  { id:"work",     label:"Work",     icon:"💼", color:"#3b82f6" },
+  { id:"fitness",  label:"Fitness",  icon:"🏃", color:"#10b981" },
+  { id:"personal", label:"Personal", icon:"🧡", color:"#f59e0b" },
+  { id:"social",   label:"Social",   icon:"👥", color:"#ec4899" },
+  { id:"creative", label:"Creative", icon:"🎨", color:"#8b5cf6" },
+  { id:"health",   label:"Health",   icon:"🍃", color:"#14b8a6" },
+];
+const CACHE_KEY = "calenstar_cache_v2";
+
+// ─── Cache ────────────────────────────────────────────────
+function loadCache() {
+  try { const s = localStorage.getItem(CACHE_KEY); return s ? JSON.parse(s) : {}; }
+  catch { return {}; }
+}
+function saveCache(entries) {
+  try { localStorage.setItem(CACHE_KEY, JSON.stringify(entries)); } catch {}
+}
+
+// ─── Supabase DB helpers ──────────────────────────────────
+async function fetchEntries() {
+  const { data, error } = await db.from("entries").select("date, text, mood, cats");
+  if (error) throw error;
+  const map = {};
+  for (const row of data) map[row.date] = { text: row.text, mood: row.mood, cats: row.cats || [] };
+  return map;
+}
+async function upsertEntry(date, entry) {
+  if (date !== getToday()) throw new Error("Can only log today's entry.");
+  const { data: { user } } = await db.auth.getUser();
+  const { error } = await db.from("entries").upsert(
+    { user_id: user.id, date, text: entry.text, mood: entry.mood, cats: entry.cats, updated_at: new Date().toISOString() },
+    { onConflict: "user_id,date" }
+  );
+  if (error) throw error;
+}
+async function deleteAllEntries() {
+  const { error } = await db.from("entries").delete().neq("date", "");
+  if (error) throw error;
+}
+
+// ─── Shared CSS ───────────────────────────────────────────
+const globalCss = `
+  .safe-top    { padding-top: max(44px, env(safe-area-inset-top)); }
+  .safe-bottom { padding-bottom: max(24px, env(safe-area-inset-bottom)); }
+  .scroll-area { overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  .auth-input {
+    background: rgba(255,255,255,.07);
+    border: 1px solid rgba(255,255,255,.12);
+    border-radius: 14px;
+    padding: 14px 16px;
+    color: #fff;
+    font-size: 16px;
+    font-family: sans-serif;
+    width: 100%;
+    outline: none;
+    transition: border .2s;
+    box-sizing: border-box;
+  }
+  .auth-input:focus { border-color: rgba(167,139,250,.6); }
+  .auth-input::placeholder { color: #444; }
+`;
+
+// ══════════════════════════════════════════════════════════
+// Root
+// ══════════════════════════════════════════════════════════
+function CalenStar() {
+  const [session, setSession] = useState(undefined);
+  const [entries, setEntries] = useState(loadCache);
+  const [syncing, setSyncing] = useState(false);
+  const [syncError, setSyncError] = useState(null);
+
+  useEffect(() => {
+    db.auth.getSession().then(({ data: { session } }) => setSession(session));
+    const { data: { subscription } } = db.auth.onAuthStateChange((_e, s) => setSession(s));
+    return () => subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (!session) return;
+    setSyncing(true); setSyncError(null);
+    fetchEntries()
+      .then(data => { setEntries(data); saveCache(data); })
+      .catch(() => setSyncError("Couldn't sync — showing cached data"))
+      .finally(() => setSyncing(false));
+  }, [session?.user?.id]);
+
+  if (session === undefined) return (
+    <>
+      <style>{globalCss}</style>
+      <div style={{ width:"100%", height:"100%", background:"#07071a", display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", gap:16 }}>
+        <div className="spinner" style={{ width:32, height:32, borderRadius:"50%", border:"2px solid rgba(167,139,250,.2)", borderTopColor:"#a78bfa" }} />
+        <p style={{ color:"#32324d", fontFamily:"sans-serif", fontSize:13, margin:0 }}>Loading…</p>
+      </div>
+    </>
+  );
+
+  if (!session) return (
+    <>
+      <style>{globalCss}</style>
+      <AuthScreen />
+    </>
+  );
+
+  return (
+    <>
+      <style>{globalCss}</style>
+      <AppShell session={session} entries={entries} setEntries={setEntries} syncing={syncing} syncError={syncError} />
+    </>
+  );
+}
+
+// ══════════════════════════════════════════════════════════
+// AuthScreen
+// ══════════════════════════════════════════════════════════
+function AuthScreen() {
+  const [mode, setMode]         = useState("login");
+  const [email, setEmail]       = useState("");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading]   = useState(false);
+  const [error, setError]       = useState(null);
+  const [message, setMessage]   = useState(null);
+
+  async function handleSubmit() {
+    setError(null); setMessage(null);
+    if (!email.trim()) return setError("Please enter your email.");
+    if (mode !== "forgot" && password.length < 6) return setError("Password must be at least 6 characters.");
+    setLoading(true);
+    try {
+      if (mode === "login") {
+        const { error } = await db.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+      } else if (mode === "signup") {
+        const { error } = await db.auth.signUp({ email, password });
+        if (error) throw error;
+        setMessage("Check your email to confirm your account, then sign in.");
+        setMode("login");
+      } else {
+        const { error } = await db.auth.resetPasswordForEmail(email);
+        if (error) throw error;
+        setMessage("Password reset email sent — check your inbox.");
+        setMode("login");
+      }
+    } catch(e) {
+      setError(e.message || "Something went wrong.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleGoogle() {
+    setError(null);
+    const { error } = await db.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo: window.location.href },
+    });
+    if (error) setError(error.message);
+  }
+
+  function switchMode(m) { setMode(m); setError(null); setMessage(null); }
+
+  return (
+    <div style={{ width:"100%", height:"100%", background:"#07071a", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"24px", overflowY:"auto" }}>
+      <div style={{ textAlign:"center", marginBottom:36 }}>
+        <div style={{ fontSize:52, marginBottom:8, filter:"drop-shadow(0 0 24px rgba(167,139,250,.6))" }}>★</div>
+        <h1 style={{ color:"#fff", margin:0, fontSize:28, fontWeight:400, letterSpacing:"-.5px" }}>CalenStar</h1>
+        <p style={{ color:"#32324d", margin:"6px 0 0", fontSize:13, fontFamily:"sans-serif" }}>Log daily. Live fully.</p>
+      </div>
+
+      <div style={{ width:"100%", maxWidth:360, background:"rgba(255,255,255,.03)", border:"1px solid rgba(255,255,255,.07)", borderRadius:24, padding:"28px 24px" }}>
+        <h2 style={{ color:"#fff", margin:"0 0 20px", fontSize:18, fontWeight:400, fontFamily:"sans-serif", textAlign:"center" }}>
+          {mode === "login" ? "Welcome back" : mode === "signup" ? "Create account" : "Reset password"}
+        </h2>
+
+        {error   && <div style={{ background:"rgba(220,38,38,.1)", border:"1px solid rgba(220,38,38,.25)", borderRadius:12, padding:"10px 14px", color:"#fca5a5", fontSize:13, fontFamily:"sans-serif", marginBottom:16 }}>{error}</div>}
+        {message && <div style={{ background:"rgba(16,185,129,.1)", border:"1px solid rgba(16,185,129,.25)", borderRadius:12, padding:"10px 14px", color:"#6ee7b7", fontSize:13, fontFamily:"sans-serif", marginBottom:16 }}>{message}</div>}
+
+        <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+          <input className="auth-input" type="email" placeholder="Email address" value={email}
+            onChange={e=>setEmail(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleSubmit()} />
+          {mode !== "forgot" && (
+            <input className="auth-input" type="password" placeholder="Password (min 6 chars)" value={password}
+              onChange={e=>setPassword(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleSubmit()} />
+          )}
+        </div>
+
+        <button onClick={handleSubmit} disabled={loading} style={{
+          width:"100%", marginTop:16,
+          background: loading ? "rgba(255,255,255,.06)" : "linear-gradient(135deg,#4c1d95,#a855f7)",
+          border:"none", borderRadius:14, padding:"15px",
+          color: loading ? "#555" : "#fff", fontSize:16, fontFamily:"sans-serif",
+          cursor: loading ? "default" : "pointer", fontWeight:600,
+          boxShadow: loading ? "none" : "0 8px 30px rgba(76,29,149,.4)", transition:"all .2s",
+        }}>
+          {loading ? "Please wait…" : mode === "login" ? "Sign In" : mode === "signup" ? "Create Account" : "Send Reset Email"}
+        </button>
+
+        {mode !== "forgot" && <>
+          <div style={{ display:"flex", alignItems:"center", gap:10, margin:"18px 0" }}>
+            <div style={{ flex:1, height:1, background:"rgba(255,255,255,.06)" }}/>
+            <span style={{ color:"#32324d", fontSize:12, fontFamily:"sans-serif" }}>or</span>
+            <div style={{ flex:1, height:1, background:"rgba(255,255,255,.06)" }}/>
+          </div>
+          <button onClick={handleGoogle} style={{ width:"100%", background:"rgba(255,255,255,.07)", border:"1px solid rgba(255,255,255,.1)", borderRadius:14, padding:"14px", color:"#ddd", fontSize:15, fontFamily:"sans-serif", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:10 }}>
+            <svg width="18" height="18" viewBox="0 0 48 48">
+              <path fill="#4285F4" d="M47.5 24.6c0-1.6-.1-3.1-.4-4.6H24v8.7h13.2c-.6 3-2.4 5.5-5 7.2v6h8.1c4.7-4.4 7.2-10.8 7.2-17.3z"/>
+              <path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-8.1-6c-2.1 1.4-4.8 2.2-7.8 2.2-6 0-11.1-4-12.9-9.5H2.8v6.2C6.8 42.8 14.8 48 24 48z"/>
+              <path fill="#FBBC05" d="M11.1 28.9c-.5-1.4-.7-2.9-.7-4.5s.2-3.1.7-4.5v-6.2H2.8C1 17.1 0 20.4 0 24s1 6.9 2.8 9.8l8.3-4.9z"/>
+              <path fill="#EA4335" d="M24 9.5c3.4 0 6.4 1.2 8.8 3.4l6.6-6.6C35.9 2.5 30.5 0 24 0 14.8 0 6.8 5.2 2.8 13l8.3 6.2c1.8-5.5 6.9-9.7 12.9-9.7z"/>
+            </svg>
+            Continue with Google
+          </button>
+        </>}
+
+        <div style={{ marginTop:20, textAlign:"center", display:"flex", flexDirection:"column", gap:8 }}>
+          {mode === "login" && <>
+            <button onClick={()=>switchMode("signup")} style={{ background:"none", border:"none", color:"#a78bfa", fontSize:13, fontFamily:"sans-serif", cursor:"pointer" }}>Don't have an account? Sign up</button>
+            <button onClick={()=>switchMode("forgot")} style={{ background:"none", border:"none", color:"#444", fontSize:12, fontFamily:"sans-serif", cursor:"pointer" }}>Forgot password?</button>
+          </>}
+          {mode === "signup" && <button onClick={()=>switchMode("login")} style={{ background:"none", border:"none", color:"#a78bfa", fontSize:13, fontFamily:"sans-serif", cursor:"pointer" }}>Already have an account? Sign in</button>}
+          {mode === "forgot" && <button onClick={()=>switchMode("login")} style={{ background:"none", border:"none", color:"#a78bfa", fontSize:13, fontFamily:"sans-serif", cursor:"pointer" }}>← Back to sign in</button>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════
+// AppShell
+// ══════════════════════════════════════════════════════════
+function AppShell({ session, entries, setEntries, syncing, syncError }) {
+  const TODAY = getToday();
+  const [view, setView]               = useState("home");
+  const [selectedDay, setSelectedDay] = useState(null);
+  const [draftText, setDraftText]     = useState("");
+  const [draftMood, setDraftMood]     = useState("🔥");
+  const [draftCats, setDraftCats]     = useState([]);
+  const [streakAnim, setStreakAnim]   = useState(false);
+  const [toast, setToast]             = useState(null);
+  const [countdown, setCountdown]     = useState("--:--:--");
+  const [saving, setSaving]           = useState(false);
+
+  const streak     = computeStreak(entries, TODAY);
+  const best       = longestStreak(entries);
+  const todayEntry = entries[TODAY];
+
+  useEffect(() => {
+    const tick = () => {
+      const now = new Date();
+      const midnight = new Date(now); midnight.setHours(24,0,0,0);
+      const diff = midnight - now;
+      const h = Math.floor(diff/3600000), m = Math.floor((diff%3600000)/60000), s = Math.floor((diff%60000)/1000);
+      setCountdown(`${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`);
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    document.body.style.overscrollBehavior = "none";
+    document.documentElement.style.overscrollBehavior = "none";
+  }, []);
+
+  function showToast(msg) { setToast(msg); setTimeout(()=>setToast(null), 2500); }
+
+  async function saveEntry() {
+    if (!draftText.trim() || saving) return;
+    const key = selectedDay || TODAY;
+    const entry = { text: draftText.trim(), mood: draftMood, cats: draftCats };
+    setSaving(true);
+    try {
+      await upsertEntry(key, entry);
+      setEntries(p => { const n = {...p, [key]: entry}; saveCache(n); return n; });
+      setDraftText(""); setDraftMood("🔥"); setDraftCats([]);
+      setStreakAnim(true); setTimeout(()=>setStreakAnim(false), 900);
+      setView("home");
+      showToast("Day logged! Streak extended ★");
+    } catch {
+      showToast("Failed to save — check your connection");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function openLog(key) {
+    // Only today can be logged/edited
+    if (key !== TODAY) { openView(key); return; }
+    const ex = entries[key];
+    setSelectedDay(key);
+    setDraftText(ex?.text || "");
+    setDraftMood(ex?.mood || "🔥");
+    setDraftCats(ex?.cats || []);
+    setView("log");
+  }
+
+  function openView(key) {
+    // Past days: read-only
+    setSelectedDay(key);
+    setView("log");
+  }
+
+  const hoursLeft = parseInt(countdown.split(":")[0]);
+  const urgent = !todayEntry && hoursLeft < 3;
+
+  return (
+    <div style={{ width:"100%", height:"100%", background:"#07071a", display:"flex", flexDirection:"column", position:"relative", overflow:"hidden" }}>
+      <div className="safe-top" style={{ flexShrink:0, background:"#07071a" }}>
+        {(syncing || syncError) && (
+          <div style={{ padding:"4px 20px", display:"flex", alignItems:"center", gap:6 }}>
+            {syncing
+              ? <><div className="spinner" style={{ width:10, height:10, borderRadius:"50%", border:"1.5px solid rgba(167,139,250,.3)", borderTopColor:"#a78bfa", flexShrink:0 }}/><span style={{ color:"#444", fontSize:10, fontFamily:"sans-serif" }}>Syncing…</span></>
+              : <span style={{ color:"#f87171", fontSize:10, fontFamily:"sans-serif" }}>⚠ {syncError}</span>
+            }
+          </div>
+        )}
+      </div>
+
+      <div className="scroll-area" style={{ flex:1, overflowY:"auto" }}>
+        <div className="view-enter" key={view}>
+          {view==="home"     && <HomeView streak={streak} best={best} entries={entries} today={TODAY} todayEntry={todayEntry} onLog={()=>openLog(TODAY)} streakAnim={streakAnim} countdown={countdown} urgent={urgent} />}
+          {view==="calendar" && <CalendarView entries={entries} today={TODAY} onSelect={openLog} />}
+          {view==="log"      && <LogView selectedDay={selectedDay||TODAY} today={TODAY} existingEntry={entries[selectedDay||TODAY]} draftText={draftText} setDraftText={setDraftText} draftMood={draftMood} setDraftMood={setDraftMood} draftCats={draftCats} setDraftCats={setDraftCats} onSave={saveEntry} saving={saving} onBack={()=>setView(selectedDay===TODAY?"home":"calendar")} />}
+          {view==="search"   && <SearchView entries={entries} onSelect={openLog} />}
+          {view==="stats"    && <StatsView entries={entries} today={TODAY} onBack={()=>setView("settings")} />}
+          {view==="settings" && <SettingsView session={session} entries={entries} setEntries={setEntries} showToast={showToast} onStats={()=>setView("stats")} />}
+        </div>
+      </div>
+
+      <NavBar view={view} setView={setView} openLog={()=>openLog(TODAY)} />
+
+      {toast && (
+        <div style={{ position:"absolute", top:64, left:16, right:16, zIndex:100, background:"rgba(90,40,220,.97)", backdropFilter:"blur(20px)", WebkitBackdropFilter:"blur(20px)", borderRadius:16, padding:"14px 18px", color:"#fff", fontSize:14, fontFamily:"sans-serif", boxShadow:"0 8px 32px rgba(90,40,220,.5)", animation:"tdrop .3s ease" }}>{toast}</div>
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════
+// NavBar
+// ══════════════════════════════════════════════════════════
+function NavBar({ view, setView, openLog }) {
+  const tabs = [
+    {id:"home",    icon:"⬟", label:"Home"},
+    {id:"calendar",icon:"◫", label:"Calendar"},
+    {id:"LOG",     icon:"✦", label:"Log", special:true},
+    {id:"search",  icon:"◎", label:"Search"},
+    {id:"settings",icon:"⊙", label:"More"},
+  ];
+  return (
+    <div className="safe-bottom" style={{ display:"flex", background:"rgba(7,7,26,.98)", backdropFilter:"blur(30px)", WebkitBackdropFilter:"blur(30px)", borderTop:"1px solid rgba(255,255,255,.055)", paddingTop:8, flexShrink:0 }}>
+      {tabs.map(t => (
+        <button key={t.id} onClick={()=>t.special?openLog():setView(t.id)} style={{ flex:1, background:"none", border:"none", cursor:"pointer", display:"flex", flexDirection:"column", alignItems:"center", gap:3, color:view===t.id?"#a78bfa":"#32324d", transition:"color .2s", padding:"4px 0" }}>
+          {t.special
+            ? <div style={{ width:52, height:52, borderRadius:"50%", marginTop:-24, background:"linear-gradient(135deg,#5b21b6,#a855f7)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:23, color:"#fff", boxShadow:"0 0 28px rgba(91,33,182,.7)" }}>{t.icon}</div>
+            : <span style={{ fontSize:19 }}>{t.icon}</span>
+          }
+          <span style={{ fontSize:9, fontFamily:"sans-serif", letterSpacing:.7, textTransform:"uppercase" }}>{t.label}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════
+// HomeView
+// ══════════════════════════════════════════════════════════
+function HomeView({ streak, best, entries, today, todayEntry, onLog, streakAnim, countdown, urgent }) {
+  const recent = [];
+  for (let i=6;i>=0;i--) {
+    const d = new Date(); d.setDate(d.getDate()-i);
+    const k = toKey(d);
+    recent.push({ k, day:d.getDate(), dow:["S","M","T","W","T","F","S"][d.getDay()], filled:!!entries[k] });
+  }
+  const logged = Object.keys(entries).filter(k=>entries[k]).length;
+
+  return (
+    <div style={{ padding:"16px 22px 24px" }}>
+      <div style={{ marginBottom:18 }}>
+        <p style={{ color:"#32324d", margin:0, fontSize:10, fontFamily:"sans-serif", letterSpacing:2.5, textTransform:"uppercase" }}>{getHeaderDate()}</p>
+        <h1 style={{ color:"#fff", margin:"3px 0 0", fontSize:26, fontWeight:400, letterSpacing:"-.5px" }}>CalenStar</h1>
+      </div>
+
+      {/* Streak hero */}
+      <div style={{ borderRadius:28, padding:"28px 20px 24px", background:"linear-gradient(145deg,#0f0630 0%,#1a0a4a 45%,#0f0630 100%)", border:"1px solid rgba(167,139,250,.15)", marginBottom:12, position:"relative", overflow:"hidden", textAlign:"center" }}>
+        {[160,220,290].map((sz,i)=>(
+          <div key={i} style={{ position:"absolute", top:"50%", left:"50%", width:sz, height:sz, borderRadius:"50%", border:"1px solid rgba(167,139,250,.06)", transform:"translate(-50%,-50%)", pointerEvents:"none" }}/>
+        ))}
+        {streakAnim && <div style={{ position:"absolute", top:"50%", left:"50%", width:130, height:130, borderRadius:"50%", border:"2px solid rgba(167,139,250,.6)", animation:"ring 1s ease-out forwards", pointerEvents:"none" }}/>}
+        <p style={{ color:"#5a2fff", margin:"0 0 6px", fontSize:10, fontFamily:"sans-serif", letterSpacing:4, textTransform:"uppercase" }}>Current Streak</p>
+        <div style={{ fontSize:100, fontWeight:900, lineHeight:1, color:"#fff", fontFamily:"sans-serif", letterSpacing:"-5px", textShadow:"0 0 90px rgba(167,139,250,.5)", transform:streakAnim?"scale(1.1)":"scale(1)", transition:"transform .4s cubic-bezier(.34,1.56,.64,1)" }}>{streak}</div>
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:10, margin:"10px 0 16px" }}>
+          <div style={{ height:1, flex:1, background:"linear-gradient(to right,transparent,rgba(167,139,250,.25))" }}/>
+          <span style={{ color:"#6d47b0", fontSize:13, fontFamily:"sans-serif" }}>days in a row</span>
+          <div style={{ height:1, flex:1, background:"linear-gradient(to left,transparent,rgba(167,139,250,.25))" }}/>
+        </div>
+        <div style={{ display:"flex", justifyContent:"center", gap:5, flexWrap:"wrap", maxWidth:280, margin:"0 auto 14px" }}>
+          {[...Array(Math.min(streak,14))].map((_,i)=>(
+            <span key={i} style={{ fontSize:14, color:"#a78bfa", filter:"drop-shadow(0 0 5px rgba(167,139,250,.8))", animation:streakAnim&&i===streak-1?"starIn .5s ease forwards":"none" }}>★</span>
+          ))}
+          {streak>14 && <span style={{ color:"#5a2fff", fontSize:11, fontFamily:"sans-serif", alignSelf:"center" }}>+{streak-14}</span>}
+        </div>
+        <p style={{ color:"#32324d", margin:0, fontSize:11, fontFamily:"sans-serif" }}>Best ever: <span style={{ color:"#6d47b0" }}>{best} days</span></p>
+      </div>
+
+      {/* Countdown */}
+      {!todayEntry && (
+        <div style={{ borderRadius:18, padding:"13px 18px", marginBottom:12, background:urgent?"rgba(220,38,38,.1)":"rgba(255,255,255,.04)", border:`1px solid ${urgent?"rgba(220,38,38,.3)":"rgba(255,255,255,.07)"}`, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+          <div>
+            <p style={{ color:urgent?"#f87171":"#444", margin:"0 0 2px", fontSize:9, fontFamily:"sans-serif", letterSpacing:2, textTransform:"uppercase" }}>{urgent?"⚠ Streak at risk":"Time until midnight"}</p>
+            <p style={{ color:urgent?"#fca5a5":"#666", margin:0, fontSize:22, fontFamily:"sans-serif", fontWeight:700, letterSpacing:2 }}>{countdown}</p>
+          </div>
+          <button onClick={onLog} style={{ background:urgent?"linear-gradient(135deg,#991b1b,#ef4444)":"linear-gradient(135deg,#4c1d95,#a855f7)", border:"none", borderRadius:14, padding:"10px 18px", color:"#fff", fontSize:13, fontFamily:"sans-serif", cursor:"pointer", fontWeight:600 }}>Log Now</button>
+        </div>
+      )}
+
+      {/* Today's entry preview */}
+      {todayEntry && (
+        <div style={{ borderRadius:18, padding:"16px 18px", marginBottom:12, background:"rgba(91,33,182,.12)", border:"1px solid rgba(167,139,250,.2)" }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:8 }}>
+            <div>
+              <p style={{ color:"#6d47b0", margin:"0 0 2px", fontSize:9, fontFamily:"sans-serif", letterSpacing:2, textTransform:"uppercase" }}>Today's Entry</p>
+              <p style={{ color:"#a78bfa", margin:0, fontSize:16 }}>{todayEntry.mood} {todayEntry.cats?.map(c=>CATEGORIES.find(x=>x.id===c)?.icon).join(" ")}</p>
+            </div>
+            <button onClick={onLog} style={{ background:"rgba(167,139,250,.1)", border:"1px solid rgba(167,139,250,.2)", borderRadius:10, padding:"6px 12px", color:"#a78bfa", fontSize:11, fontFamily:"sans-serif", cursor:"pointer" }}>Edit</button>
+          </div>
+          <p style={{ color:"#888", margin:0, fontSize:13, fontFamily:"sans-serif", lineHeight:1.6, display:"-webkit-box", WebkitLineClamp:2, WebkitBoxOrient:"vertical", overflow:"hidden" }}>{todayEntry.text}</p>
+        </div>
+      )}
+
+      {/* Week strip */}
+      <div style={{ display:"flex", gap:4, marginBottom:14 }}>
+        {recent.map(({k,day,dow,filled})=>(
+          <div key={k} style={{ flex:1, textAlign:"center" }}>
+            <p style={{ color:"#32324d", margin:"0 0 4px", fontSize:9, fontFamily:"sans-serif" }}>{dow}</p>
+            <div style={{ aspectRatio:"1", borderRadius:10, background:filled?"linear-gradient(135deg,#5b21b6,#a855f7)":"rgba(255,255,255,.04)", border:k===today?"1px solid rgba(167,139,250,.5)":"1px solid transparent", display:"flex", alignItems:"center", justifyContent:"center" }}>
+              <span style={{ color:filled?"#fff":"#333", fontSize:12, fontFamily:"sans-serif" }}>{filled?"★":day}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Stats */}
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+        {[
+          { label:"Total Logged", value:logged, icon:"📅" },
+          { label:"Best Streak",  value:`${best}d`, icon:"🏆" },
+        ].map(s=>(
+          <div key={s.label} style={{ background:"rgba(255,255,255,.04)", border:"1px solid rgba(255,255,255,.07)", borderRadius:18, padding:"14px 16px" }}>
+            <p style={{ color:"#32324d", margin:"0 0 4px", fontSize:9, fontFamily:"sans-serif", letterSpacing:2, textTransform:"uppercase" }}>{s.icon} {s.label}</p>
+            <p style={{ color:"#fff", margin:0, fontSize:26, fontFamily:"sans-serif", fontWeight:800 }}>{s.value}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════
+// CalendarView
+// ══════════════════════════════════════════════════════════
+function CalendarView({ entries, today, onSelect }) {
+  const now = new Date();
+  const [month, setMonth] = useState(now.getMonth());
+  const [year,  setYear]  = useState(now.getFullYear());
+  const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+
+  function prevMonth() { if(month===0){setMonth(11);setYear(y=>y-1);}else setMonth(m=>m-1); }
+  function nextMonth() { if(month===11){setMonth(0);setYear(y=>y+1);}else setMonth(m=>m+1); }
+
+  const firstDay = new Date(year,month,1).getDay();
+  const daysInMo = new Date(year,month+1,0).getDate();
+  const cells = [];
+  for(let i=0;i<firstDay;i++) cells.push(null);
+  for(let d=1;d<=daysInMo;d++) cells.push(d);
+
+  return (
+    <div style={{ padding:"16px 22px" }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20 }}>
+        <button onClick={prevMonth} style={{ background:"rgba(255,255,255,.06)", border:"none", color:"#a78bfa", fontSize:20, cursor:"pointer", width:38, height:38, borderRadius:12 }}>‹</button>
+        <div style={{ textAlign:"center" }}>
+          <h2 style={{ color:"#fff", margin:0, fontSize:20, fontWeight:400 }}>{MONTHS[month]}</h2>
+          <p style={{ color:"#32324d", margin:0, fontSize:11, fontFamily:"sans-serif" }}>{year}</p>
+        </div>
+        <button onClick={nextMonth} style={{ background:"rgba(255,255,255,.06)", border:"none", color:"#a78bfa", fontSize:20, cursor:"pointer", width:38, height:38, borderRadius:12 }}>›</button>
+      </div>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:3, marginBottom:6 }}>
+        {["S","M","T","W","T","F","S"].map((d,i)=>(
+          <div key={i} style={{ textAlign:"center", color:"#32324d", fontSize:10, fontFamily:"sans-serif", padding:"3px 0" }}>{d}</div>
+        ))}
+      </div>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:3 }}>
+        {cells.map((day,i)=>{
+          if(!day) return <div key={i}/>;
+          const k = `${year}-${String(month+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
+          const entry = entries[k];
+          const isToday = k===today;
+          const isFuture = k>today;
+          const catColor = entry?.cats?.[0] ? CATEGORIES.find(c=>c.id===entry.cats[0])?.color : null;
+          return (
+            <button key={i} onClick={()=>!isFuture&&onSelect(k)} style={{ aspectRatio:"1", borderRadius:11, background:entry?(catColor?`${catColor}2a`:"rgba(91,33,182,.3)"):isToday?"rgba(91,33,182,.14)":"rgba(255,255,255,.04)", border:entry?`1px solid ${catColor||"#7c3aed"}55`:isToday?"1px solid rgba(167,139,250,.4)":"1px solid transparent", cursor:isFuture?"default":"pointer", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:1, opacity:isFuture?.28:1 }}>
+              <span style={{ color:entry?"#fff":isToday?"#a78bfa":"#444", fontSize:12, fontFamily:"sans-serif" }}>{day}</span>
+              {entry && <span style={{ fontSize:9 }}>{entry.mood}</span>}
+            </button>
+          );
+        })}
+      </div>
+      <div style={{ marginTop:20, display:"flex", flexWrap:"wrap", gap:8 }}>
+        {CATEGORIES.map(c=>(
+          <div key={c.id} style={{ display:"flex", alignItems:"center", gap:5 }}>
+            <div style={{ width:10, height:10, borderRadius:3, background:c.color }}/>
+            <span style={{ color:"#444", fontSize:11, fontFamily:"sans-serif" }}>{c.label}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════
+// LogView
+// ══════════════════════════════════════════════════════════
+function LogView({ selectedDay, today, existingEntry, draftText, setDraftText, draftMood, setDraftMood, draftCats, setDraftCats, onSave, saving, onBack }) {
+  const isToday = selectedDay === today;
+  const isPast  = selectedDay < today;
+  const readOnly = isPast; // future days are blocked at calendar level
+
+  function toggleCat(id) {
+    if (readOnly) return;
+    setDraftCats(p=>p.includes(id)?p.filter(c=>c!==id):[...p,id]);
+  }
+  const ready = draftText.trim().length > 0 && !saving;
+
+  // Read-only view for past days
+  if (readOnly) {
+    const entry = existingEntry;
+    return (
+      <div style={{ padding:"16px 22px 32px" }}>
+        <button onClick={onBack} style={{ background:"none", border:"none", color:"#a78bfa", cursor:"pointer", fontSize:14, fontFamily:"sans-serif", padding:0, marginBottom:18 }}>← Back</button>
+        <p style={{ color:"#32324d", margin:"0 0 3px", fontSize:10, fontFamily:"sans-serif", letterSpacing:2.5, textTransform:"uppercase" }}>{dayLabel(selectedDay)}</p>
+        <h2 style={{ color:"#fff", fontSize:22, fontWeight:400, margin:"0 0 6px" }}>{entry ? "Past Entry" : "No Entry"}</h2>
+        <p style={{ color:"#32324d", fontSize:11, fontFamily:"sans-serif", margin:"0 0 22px" }}>Past entries are read-only to keep streaks honest.</p>
+
+        {entry ? (
+          <>
+            <div style={{ display:"flex", gap:8, marginBottom:18, flexWrap:"wrap" }}>
+              <div style={{ background:"rgba(91,33,182,.2)", border:"1px solid rgba(167,139,250,.2)", borderRadius:20, padding:"6px 14px", display:"flex", alignItems:"center", gap:6 }}>
+                <span style={{ fontSize:20 }}>{entry.mood}</span>
+              </div>
+              {(entry.cats||[]).map(c => {
+                const cat = CATEGORIES.find(x=>x.id===c);
+                return cat ? (
+                  <div key={c} style={{ background:`${cat.color}22`, border:`1px solid ${cat.color}44`, borderRadius:20, padding:"6px 14px", display:"flex", alignItems:"center", gap:6 }}>
+                    <span>{cat.icon}</span>
+                    <span style={{ color:cat.color, fontSize:12, fontFamily:"sans-serif" }}>{cat.label}</span>
+                  </div>
+                ) : null;
+              })}
+            </div>
+            <div style={{ background:"rgba(255,255,255,.04)", border:"1px solid rgba(255,255,255,.08)", borderRadius:18, padding:"18px" }}>
+              <p style={{ color:"#ccc", margin:0, fontSize:15, fontFamily:"Georgia,serif", lineHeight:1.75 }}>{entry.text}</p>
+            </div>
+          </>
+        ) : (
+          <div style={{ background:"rgba(255,255,255,.04)", border:"1px solid rgba(255,255,255,.06)", borderRadius:18, padding:"32px", textAlign:"center" }}>
+            <p style={{ color:"#32324d", margin:0, fontSize:14, fontFamily:"sans-serif" }}>Nothing was logged on this day.</p>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Editable view for today
+  return (
+    <div style={{ padding:"16px 22px 32px" }}>
+      <button onClick={onBack} style={{ background:"none", border:"none", color:"#a78bfa", cursor:"pointer", fontSize:14, fontFamily:"sans-serif", padding:0, marginBottom:18 }}>← Back</button>
+      <p style={{ color:"#32324d", margin:"0 0 3px", fontSize:10, fontFamily:"sans-serif", letterSpacing:2.5, textTransform:"uppercase" }}>{dayLabel(selectedDay)}</p>
+      <h2 style={{ color:"#fff", fontSize:22, fontWeight:400, margin:"0 0 22px" }}>{existingEntry ? "Edit Today's Entry" : "What happened today?"}</h2>
+
+      <p style={{ color:"#32324d", fontSize:9, fontFamily:"sans-serif", margin:"0 0 10px", letterSpacing:2.5, textTransform:"uppercase" }}>Mood</p>
+      <div style={{ display:"flex", gap:7, marginBottom:22, flexWrap:"wrap" }}>
+        {MOODS.map(m=>(
+          <button key={m} onClick={()=>setDraftMood(m)} style={{ width:42, height:42, borderRadius:"50%", fontSize:19, cursor:"pointer", background:draftMood===m?"rgba(91,33,182,.4)":"rgba(255,255,255,.06)", border:draftMood===m?"2px solid #a78bfa":"2px solid transparent", boxShadow:draftMood===m?"0 0 14px rgba(91,33,182,.5)":"none", transition:"all .15s" }}>{m}</button>
+        ))}
+      </div>
+
+      <p style={{ color:"#32324d", fontSize:9, fontFamily:"sans-serif", margin:"0 0 10px", letterSpacing:2.5, textTransform:"uppercase" }}>Categories</p>
+      <div style={{ display:"flex", flexWrap:"wrap", gap:8, marginBottom:22 }}>
+        {CATEGORIES.map(cat=>{
+          const active = draftCats.includes(cat.id);
+          return (
+            <button key={cat.id} onClick={()=>toggleCat(cat.id)} style={{ background:active?`${cat.color}2a`:"rgba(255,255,255,.05)", border:active?`1px solid ${cat.color}77`:"1px solid rgba(255,255,255,.08)", borderRadius:12, padding:"7px 12px", cursor:"pointer", display:"flex", alignItems:"center", gap:6, color:active?cat.color:"#444", fontSize:13, fontFamily:"sans-serif", transition:"all .15s" }}>
+              <span>{cat.icon}</span><span>{cat.label}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      <p style={{ color:"#32324d", fontSize:9, fontFamily:"sans-serif", margin:"0 0 10px", letterSpacing:2.5, textTransform:"uppercase" }}>Your Day</p>
+      <textarea value={draftText} onChange={e=>setDraftText(e.target.value)}
+        placeholder="Write anything — big wins, small moments, what you learned, what you felt..."
+        style={{ width:"100%", minHeight:155, background:"rgba(255,255,255,.05)", border:"1px solid rgba(255,255,255,.1)", borderRadius:18, padding:"16px", color:"#ddd", fontSize:15, lineHeight:1.7, resize:"none", outline:"none", boxSizing:"border-box", fontFamily:"Georgia,serif" }}
+      />
+      <div style={{ display:"flex", justifyContent:"space-between", margin:"8px 0 18px" }}>
+        <span style={{ color:"#32324d", fontSize:11, fontFamily:"sans-serif" }}>{draftText.length} chars</span>
+        {draftText.trim()&&!saving && <span style={{ color:"#6d47b0", fontSize:11, fontFamily:"sans-serif" }}>✓ Ready</span>}
+        {saving && <span style={{ color:"#a78bfa", fontSize:11, fontFamily:"sans-serif" }}>Saving…</span>}
+      </div>
+
+      <button onClick={onSave} disabled={!ready} style={{ width:"100%", background:ready?"linear-gradient(135deg,#4c1d95,#a855f7)":"rgba(255,255,255,.06)", border:"none", borderRadius:18, padding:"18px", color:ready?"#fff":"#333", fontSize:17, cursor:ready?"pointer":"default", boxShadow:ready?"0 8px 30px rgba(76,29,149,.45)":"none", transition:"all .2s" }}>
+        {saving?"Saving…":existingEntry?"Update Entry ★":"Save & Extend Streak ★"}
+      </button>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════
+// SearchView
+// ══════════════════════════════════════════════════════════
+function SearchView({ entries, onSelect }) {
+  const [query, setQuery]       = useState("");
+  const [filterMood, setFilterMood] = useState(null);
+  const [filterCat, setFilterCat]   = useState(null);
+  const inputRef = React.useRef(null);
+
+  // Focus search on mount
+  useEffect(() => { setTimeout(() => inputRef.current?.focus(), 100); }, []);
+
+  const allKeys = Object.keys(entries).filter(k => entries[k]).sort().reverse();
+
+  const results = allKeys.filter(k => {
+    const e = entries[k];
+    const q = query.toLowerCase().trim();
+    const matchesText = !q || e.text?.toLowerCase().includes(q) || k.includes(q);
+    const matchesMood = !filterMood || e.mood === filterMood;
+    const matchesCat  = !filterCat  || (e.cats||[]).includes(filterCat);
+    return matchesText && matchesMood && matchesCat;
+  });
+
+  // Highlight matching text
+  function highlight(text, q) {
+    if (!q.trim()) return text;
+    const idx = text.toLowerCase().indexOf(q.toLowerCase());
+    if (idx === -1) return text;
+    return (
+      <>
+        {text.slice(0, idx)}
+        <mark style={{ background:"rgba(167,139,250,.3)", color:"#e9d5ff", borderRadius:2 }}>{text.slice(idx, idx+q.length)}</mark>
+        {text.slice(idx+q.length)}
+      </>
+    );
+  }
+
+  // Unique moods across all entries
+  const allMoods = [...new Set(allKeys.map(k => entries[k].mood))];
+
+  return (
+    <div style={{ padding:"16px 22px 32px", display:"flex", flexDirection:"column", gap:0 }}>
+      <p style={{ color:"#32324d", margin:"0 0 3px", fontSize:10, fontFamily:"sans-serif", letterSpacing:2.5, textTransform:"uppercase" }}>Browse & Find</p>
+      <h1 style={{ color:"#fff", margin:"3px 0 16px", fontSize:26, fontWeight:400 }}>Search</h1>
+
+      {/* Search input */}
+      <div style={{ position:"relative", marginBottom:14 }}>
+        <span style={{ position:"absolute", left:14, top:"50%", transform:"translateY(-50%)", color:"#444", fontSize:16, pointerEvents:"none" }}>◎</span>
+        <input
+          ref={inputRef}
+          className="auth-input"
+          type="text"
+          placeholder="Search your entries…"
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          style={{ paddingLeft:40 }}
+        />
+        {query && (
+          <button onClick={()=>setQuery("")} style={{ position:"absolute", right:14, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", color:"#444", fontSize:18, cursor:"pointer", lineHeight:1 }}>×</button>
+        )}
+      </div>
+
+      {/* Mood filter pills */}
+      {allMoods.length > 0 && (
+        <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:10 }}>
+          {allMoods.map(m => (
+            <button key={m} onClick={() => setFilterMood(filterMood===m ? null : m)} style={{ background: filterMood===m ? "rgba(91,33,182,.4)" : "rgba(255,255,255,.06)", border: filterMood===m ? "1px solid #a78bfa" : "1px solid rgba(255,255,255,.08)", borderRadius:20, padding:"5px 10px", fontSize:16, cursor:"pointer" }}>{m}</button>
+          ))}
+        </div>
+      )}
+
+      {/* Category filter pills */}
+      <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:16 }}>
+        {CATEGORIES.map(cat => {
+          const active = filterCat === cat.id;
+          return (
+            <button key={cat.id} onClick={() => setFilterCat(active ? null : cat.id)} style={{ background: active ? `${cat.color}2a` : "rgba(255,255,255,.05)", border: active ? `1px solid ${cat.color}77` : "1px solid rgba(255,255,255,.07)", borderRadius:20, padding:"5px 12px", cursor:"pointer", display:"flex", alignItems:"center", gap:5, color: active ? cat.color : "#444", fontSize:12, fontFamily:"sans-serif" }}>
+              <span>{cat.icon}</span>{cat.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Result count */}
+      <p style={{ color:"#32324d", fontSize:10, fontFamily:"sans-serif", letterSpacing:1.5, textTransform:"uppercase", margin:"0 0 10px" }}>
+        {results.length} {results.length === 1 ? "entry" : "entries"}
+        {(query || filterMood || filterCat) ? " found" : " total"}
+      </p>
+
+      {/* Results */}
+      {results.length === 0 ? (
+        <div style={{ textAlign:"center", padding:"40px 0" }}>
+          <div style={{ fontSize:40, marginBottom:12 }}>🔍</div>
+          <p style={{ color:"#32324d", fontSize:14, fontFamily:"sans-serif" }}>No entries match your search.</p>
+        </div>
+      ) : (
+        <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+          {results.map(k => {
+            const e = entries[k];
+            const catColor = e.cats?.[0] ? CATEGORIES.find(c=>c.id===e.cats[0])?.color : null;
+            return (
+              <button key={k} onClick={() => onSelect(k)} style={{ background:"rgba(255,255,255,.04)", border:`1px solid ${catColor ? catColor+"33" : "rgba(255,255,255,.07)"}`, borderRadius:18, padding:"14px 16px", cursor:"pointer", textAlign:"left", transition:"background .15s" }}
+                onMouseEnter={ev=>ev.currentTarget.style.background="rgba(255,255,255,.07)"}
+                onMouseLeave={ev=>ev.currentTarget.style.background="rgba(255,255,255,.04)"}>
+                {/* Header row */}
+                <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:8 }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                    <span style={{ fontSize:18 }}>{e.mood}</span>
+                    <span style={{ color:"#6d47b0", fontSize:11, fontFamily:"sans-serif" }}>{dayLabel(k)}</span>
+                  </div>
+                  <div style={{ display:"flex", gap:4 }}>
+                    {(e.cats||[]).map(c => {
+                      const cat = CATEGORIES.find(x=>x.id===c);
+                      return cat ? <span key={c} style={{ fontSize:13 }}>{cat.icon}</span> : null;
+                    })}
+                  </div>
+                </div>
+                {/* Entry text preview */}
+                <p style={{ color:"#888", margin:0, fontSize:13, fontFamily:"sans-serif", lineHeight:1.6, display:"-webkit-box", WebkitLineClamp:3, WebkitBoxOrient:"vertical", overflow:"hidden" }}>
+                  {highlight(e.text, query)}
+                </p>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════
+// StatsView
+// ══════════════════════════════════════════════════════════
+function StatsView({ entries, today, onBack }) {
+  const allKeys = Object.keys(entries).filter(k => entries[k]).sort();
+  const totalDays = allKeys.length;
+  const currentStreak = computeStreak(entries, today);
+  const best = longestStreak(entries);
+
+  // Days of week heatmap (0=Sun … 6=Sat)
+  const dowCounts = Array(7).fill(0);
+  allKeys.forEach(k => { dowCounts[parseKey(k).getDay()]++; });
+  const dowMax = Math.max(...dowCounts, 1);
+  const dowLabels = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+
+  // Mood breakdown
+  const moodCounts = {};
+  allKeys.forEach(k => {
+    const m = entries[k].mood;
+    moodCounts[m] = (moodCounts[m] || 0) + 1;
+  });
+  const moodSorted = Object.entries(moodCounts).sort((a,b)=>b[1]-a[1]).slice(0,5);
+
+  // Category breakdown
+  const catCounts = {};
+  allKeys.forEach(k => {
+    (entries[k].cats || []).forEach(c => { catCounts[c] = (catCounts[c]||0)+1; });
+  });
+
+  // Last 12 weeks heatmap
+  const weeks = [];
+  const todayDate = parseKey(today);
+  // go back to the most recent Sunday
+  const startDate = new Date(todayDate);
+  startDate.setDate(startDate.getDate() - startDate.getDay() - 7*11);
+  for (let w=0; w<12; w++) {
+    const week = [];
+    for (let d=0; d<7; d++) {
+      const date = new Date(startDate);
+      date.setDate(startDate.getDate() + w*7 + d);
+      const k = toKey(date);
+      week.push({ k, filled: !!entries[k], future: k > today });
+    }
+    weeks.push(week);
+  }
+
+  // Monthly log rate for last 6 months
+  const monthStats = [];
+  for (let i=5; i>=0; i--) {
+    const d = new Date(todayDate.getFullYear(), todayDate.getMonth()-i, 1);
+    const yr = d.getFullYear(), mo = d.getMonth();
+    const daysInMo = new Date(yr, mo+1, 0).getDate();
+    const moKey = `${yr}-${String(mo+1).padStart(2,"0")}`;
+    let logged = 0;
+    for (let day=1; day<=daysInMo; day++) {
+      const k = `${moKey}-${String(day).padStart(2,"0")}`;
+      if (entries[k]) logged++;
+    }
+    const cappedDays = Math.min(daysInMo, toKey(d) <= today.slice(0,7) ? daysInMo : parseInt(today.slice(8)));
+    monthStats.push({
+      label: ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][mo],
+      logged,
+      total: cappedDays,
+      pct: cappedDays > 0 ? Math.round(logged/cappedDays*100) : 0,
+    });
+  }
+  const barMax = Math.max(...monthStats.map(m=>m.logged), 1);
+
+  // Avg entry length
+  const avgLen = totalDays > 0
+    ? Math.round(allKeys.reduce((s,k) => s + (entries[k].text?.length||0), 0) / totalDays)
+    : 0;
+
+  // Current month completion
+  const thisMonthTotal = monthStats[5]?.total || 1;
+  const thisMonthLogged = monthStats[5]?.logged || 0;
+  const completionPct = Math.round(thisMonthLogged / thisMonthTotal * 100);
+
+  if (totalDays === 0) return (
+    <div style={{ padding:"16px 22px", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", minHeight:300 }}>
+      <div style={{ fontSize:48, marginBottom:12 }}>📊</div>
+      <h2 style={{ color:"#fff", fontSize:20, fontWeight:400, margin:"0 0 8px" }}>No stats yet</h2>
+      <p style={{ color:"#32324d", fontSize:13, fontFamily:"sans-serif", textAlign:"center" }}>Start logging days to see your insights here.</p>
+    </div>
+  );
+
+  return (
+    <div style={{ padding:"16px 22px 32px" }}>
+      <button onClick={onBack} style={{ background:"none", border:"none", color:"#a78bfa", cursor:"pointer", fontSize:14, fontFamily:"sans-serif", padding:0, marginBottom:4 }}>← Back</button>
+      <p style={{ color:"#32324d", margin:0, fontSize:10, fontFamily:"sans-serif", letterSpacing:2.5, textTransform:"uppercase" }}>Your Progress</p>
+      <h1 style={{ color:"#fff", margin:"3px 0 20px", fontSize:26, fontWeight:400 }}>Stats</h1>
+
+      {/* Top stat cards */}
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:10 }}>
+        {[
+          { label:"Current Streak", value:`${currentStreak}d`, icon:"🔥", color:"#a78bfa" },
+          { label:"Best Streak",    value:`${best}d`,          icon:"🏆", color:"#f59e0b" },
+          { label:"Total Logged",   value:totalDays,           icon:"📅", color:"#10b981" },
+          { label:"Avg Entry",      value:`${avgLen}c`,        icon:"✍️", color:"#3b82f6" },
+        ].map(s => (
+          <div key={s.label} style={{ background:"rgba(255,255,255,.04)", border:"1px solid rgba(255,255,255,.07)", borderRadius:18, padding:"14px 16px" }}>
+            <p style={{ color:"#32324d", margin:"0 0 6px", fontSize:9, fontFamily:"sans-serif", letterSpacing:1.5, textTransform:"uppercase" }}>{s.icon} {s.label}</p>
+            <p style={{ color:s.color, margin:0, fontSize:28, fontFamily:"sans-serif", fontWeight:800 }}>{s.value}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* This month completion ring */}
+      <div style={{ background:"rgba(255,255,255,.04)", border:"1px solid rgba(255,255,255,.07)", borderRadius:18, padding:"18px", marginBottom:10, display:"flex", alignItems:"center", gap:18 }}>
+        <div style={{ position:"relative", width:72, height:72, flexShrink:0 }}>
+          <svg width="72" height="72" style={{ transform:"rotate(-90deg)" }}>
+            <circle cx="36" cy="36" r="28" fill="none" stroke="rgba(255,255,255,.07)" strokeWidth="6"/>
+            <circle cx="36" cy="36" r="28" fill="none" stroke="#a78bfa" strokeWidth="6"
+              strokeDasharray={`${2*Math.PI*28}`}
+              strokeDashoffset={`${2*Math.PI*28*(1-completionPct/100)}`}
+              strokeLinecap="round" style={{ transition:"stroke-dashoffset .6s ease" }}/>
+          </svg>
+          <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center" }}>
+            <span style={{ color:"#fff", fontSize:15, fontFamily:"sans-serif", fontWeight:700 }}>{completionPct}%</span>
+          </div>
+        </div>
+        <div>
+          <p style={{ color:"#32324d", margin:"0 0 4px", fontSize:9, fontFamily:"sans-serif", letterSpacing:2, textTransform:"uppercase" }}>This Month</p>
+          <p style={{ color:"#fff", margin:"0 0 2px", fontSize:18, fontFamily:"sans-serif", fontWeight:600 }}>{thisMonthLogged} of {thisMonthTotal} days</p>
+          <p style={{ color:"#444", margin:0, fontSize:12, fontFamily:"sans-serif" }}>logged this month</p>
+        </div>
+      </div>
+
+      {/* Activity heatmap — last 12 weeks */}
+      <div style={{ background:"rgba(255,255,255,.04)", border:"1px solid rgba(255,255,255,.07)", borderRadius:18, padding:"16px", marginBottom:10 }}>
+        <p style={{ color:"#32324d", margin:"0 0 12px", fontSize:9, fontFamily:"sans-serif", letterSpacing:2, textTransform:"uppercase" }}>Activity · Last 12 Weeks</p>
+        <div style={{ display:"flex", gap:3 }}>
+          {weeks.map((week, wi) => (
+            <div key={wi} style={{ display:"flex", flexDirection:"column", gap:3, flex:1 }}>
+              {week.map((day, di) => (
+                <div key={di} style={{ aspectRatio:"1", borderRadius:3, background: day.future ? "transparent" : day.filled ? "#7c3aed" : "rgba(255,255,255,.06)", border: day.future ? "none" : "1px solid rgba(255,255,255,.04)" }} />
+              ))}
+            </div>
+          ))}
+        </div>
+        <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:10, justifyContent:"flex-end" }}>
+          <span style={{ color:"#32324d", fontSize:9, fontFamily:"sans-serif" }}>Less</span>
+          {["rgba(255,255,255,.06)","#4c1d95","#6d28d9","#7c3aed"].map((c,i) => (
+            <div key={i} style={{ width:10, height:10, borderRadius:2, background:c }} />
+          ))}
+          <span style={{ color:"#32324d", fontSize:9, fontFamily:"sans-serif" }}>More</span>
+        </div>
+      </div>
+
+      {/* Monthly bar chart */}
+      <div style={{ background:"rgba(255,255,255,.04)", border:"1px solid rgba(255,255,255,.07)", borderRadius:18, padding:"16px", marginBottom:10 }}>
+        <p style={{ color:"#32324d", margin:"0 0 14px", fontSize:9, fontFamily:"sans-serif", letterSpacing:2, textTransform:"uppercase" }}>Days Logged · Last 6 Months</p>
+        <div style={{ display:"flex", gap:8, alignItems:"flex-end", height:80 }}>
+          {monthStats.map((m,i) => (
+            <div key={i} style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", gap:4 }}>
+              <span style={{ color:"#6d47b0", fontSize:9, fontFamily:"sans-serif" }}>{m.logged}</span>
+              <div style={{ width:"100%", borderRadius:4, background:"linear-gradient(to top,#5b21b6,#a855f7)", height:`${Math.round((m.logged/barMax)*60)+4}px`, transition:"height .4s ease", minHeight:4 }} />
+              <span style={{ color:"#32324d", fontSize:9, fontFamily:"sans-serif" }}>{m.label}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Day of week breakdown */}
+      <div style={{ background:"rgba(255,255,255,.04)", border:"1px solid rgba(255,255,255,.07)", borderRadius:18, padding:"16px", marginBottom:10 }}>
+        <p style={{ color:"#32324d", margin:"0 0 14px", fontSize:9, fontFamily:"sans-serif", letterSpacing:2, textTransform:"uppercase" }}>Best Days of the Week</p>
+        <div style={{ display:"flex", gap:6, alignItems:"flex-end", height:64 }}>
+          {dowLabels.map((label, i) => (
+            <div key={i} style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", gap:4 }}>
+              <div style={{ width:"100%", borderRadius:4, background: dowCounts[i]===dowMax && dowMax>0 ? "linear-gradient(to top,#5b21b6,#a855f7)" : "rgba(167,139,250,.2)", height:`${Math.round((dowCounts[i]/dowMax)*48)+4}px`, minHeight:4, transition:"height .4s ease" }} />
+              <span style={{ color:"#32324d", fontSize:8, fontFamily:"sans-serif" }}>{label.slice(0,2)}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Top moods */}
+      {moodSorted.length > 0 && (
+        <div style={{ background:"rgba(255,255,255,.04)", border:"1px solid rgba(255,255,255,.07)", borderRadius:18, padding:"16px", marginBottom:10 }}>
+          <p style={{ color:"#32324d", margin:"0 0 12px", fontSize:9, fontFamily:"sans-serif", letterSpacing:2, textTransform:"uppercase" }}>Top Moods</p>
+          {moodSorted.map(([mood, count]) => (
+            <div key={mood} style={{ display:"flex", alignItems:"center", gap:12, marginBottom:10 }}>
+              <span style={{ fontSize:22, width:28 }}>{mood}</span>
+              <div style={{ flex:1, height:8, borderRadius:4, background:"rgba(255,255,255,.06)", overflow:"hidden" }}>
+                <div style={{ height:"100%", borderRadius:4, background:"linear-gradient(to right,#5b21b6,#a855f7)", width:`${Math.round(count/totalDays*100)}%`, transition:"width .4s ease" }} />
+              </div>
+              <span style={{ color:"#6d47b0", fontSize:12, fontFamily:"sans-serif", width:28, textAlign:"right" }}>{count}x</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Category breakdown */}
+      {Object.keys(catCounts).length > 0 && (
+        <div style={{ background:"rgba(255,255,255,.04)", border:"1px solid rgba(255,255,255,.07)", borderRadius:18, padding:"16px" }}>
+          <p style={{ color:"#32324d", margin:"0 0 12px", fontSize:9, fontFamily:"sans-serif", letterSpacing:2, textTransform:"uppercase" }}>Category Breakdown</p>
+          {CATEGORIES.filter(c=>catCounts[c.id]).sort((a,b)=>(catCounts[b.id]||0)-(catCounts[a.id]||0)).map(cat => (
+            <div key={cat.id} style={{ display:"flex", alignItems:"center", gap:12, marginBottom:10 }}>
+              <span style={{ fontSize:18, width:24 }}>{cat.icon}</span>
+              <div style={{ flex:1 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
+                  <span style={{ color:cat.color, fontSize:12, fontFamily:"sans-serif" }}>{cat.label}</span>
+                  <span style={{ color:"#444", fontSize:11, fontFamily:"sans-serif" }}>{catCounts[cat.id]}d</span>
+                </div>
+                <div style={{ height:6, borderRadius:3, background:"rgba(255,255,255,.06)", overflow:"hidden" }}>
+                  <div style={{ height:"100%", borderRadius:3, background:cat.color, width:`${Math.round(catCounts[cat.id]/totalDays*100)}%`, opacity:.7, transition:"width .4s ease" }} />
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════
+// SettingsView
+// ══════════════════════════════════════════════════════════
+function SettingsView({ session, entries, setEntries, showToast, onStats }) {
+  const [signingOut, setSigningOut] = useState(false);
+
+  async function handleSignOut() {
+    setSigningOut(true);
+    await db.auth.signOut();
+    localStorage.removeItem(CACHE_KEY);
+  }
+
+  async function handleClearEntries() {
+    if (!window.confirm("Delete ALL your entries? This cannot be undone.")) return;
+    try {
+      await deleteAllEntries();
+      setEntries({});
+      saveCache({});
+      showToast("All entries deleted");
+    } catch {
+      showToast("Failed to delete — try again");
+    }
+  }
+
+  return (
+    <div style={{ padding:"16px 22px 32px" }}>
+      <h2 style={{ color:"#fff", fontSize:22, fontWeight:400, margin:"0 0 4px" }}>More</h2>
+      <p style={{ color:"#32324d", fontSize:12, fontFamily:"sans-serif", margin:"0 0 24px" }}>Account & streak rules</p>
+
+      {/* Stats shortcut */}
+      <button onClick={onStats} style={{ width:"100%", background:"rgba(255,255,255,.04)", border:"1px solid rgba(255,255,255,.07)", borderRadius:18, padding:"16px 18px", marginBottom:10, display:"flex", alignItems:"center", justifyContent:"space-between", cursor:"pointer" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+          <span style={{ fontSize:22 }}>📊</span>
+          <div style={{ textAlign:"left" }}>
+            <p style={{ color:"#ddd", margin:0, fontSize:15, fontFamily:"sans-serif" }}>Stats & Insights</p>
+            <p style={{ color:"#444", margin:0, fontSize:11, fontFamily:"sans-serif" }}>Streaks, moods, categories</p>
+          </div>
+        </div>
+        <span style={{ color:"#444", fontSize:18 }}>›</span>
+      </button>
+
+      <p style={{ color:"#32324d", fontSize:9, fontFamily:"sans-serif", margin:"0 0 12px", letterSpacing:2.5, textTransform:"uppercase" }}>Account</p>
+      <div style={{ background:"rgba(255,255,255,.04)", border:"1px solid rgba(255,255,255,.06)", borderRadius:18, padding:"16px 18px", marginBottom:10 }}>
+        <p style={{ color:"#888", margin:"0 0 2px", fontSize:11, fontFamily:"sans-serif" }}>Signed in as</p>
+        <p style={{ color:"#ddd", margin:"0 0 14px", fontSize:14, fontFamily:"sans-serif" }}>{session.user.email}</p>
+        <button onClick={handleSignOut} disabled={signingOut} style={{ background:"none", border:"1px solid rgba(255,255,255,.12)", borderRadius:12, padding:"9px 16px", color:"#aaa", fontSize:13, fontFamily:"sans-serif", cursor:"pointer" }}>
+          {signingOut?"Signing out…":"Sign Out"}
+        </button>
+      </div>
+
+      <p style={{ color:"#32324d", fontSize:9, fontFamily:"sans-serif", margin:"22px 0 12px", letterSpacing:2.5, textTransform:"uppercase" }}>Streak Rules</p>
+      <div style={{ background:"rgba(255,255,255,.04)", border:"1px solid rgba(255,255,255,.06)", borderRadius:18, padding:"20px 18px" }}>
+        {[
+          {icon:"🕛", title:"Midnight Cutoff", desc:"Log by 11:59 PM each night — no grace period. The streak resets at midnight sharp."},
+          {icon:"📝", title:"One Entry Per Day", desc:"Each day needs at least one entry to count toward your streak."},
+          {icon:"💔", title:"Broken Streaks Reset", desc:"Miss a day and your counter goes back to 0. No exceptions."},
+          {icon:"⭐", title:"Stars Are Forever", desc:"Your total stars and best streak records are never erased."},
+        ].map((r,i)=>(
+          <div key={i} style={{ display:"flex", gap:14, marginBottom:i<3?16:0 }}>
+            <span style={{ fontSize:22 }}>{r.icon}</span>
+            <div>
+              <p style={{ color:"#ccc", margin:"0 0 3px", fontSize:14, fontFamily:"sans-serif" }}>{r.title}</p>
+              <p style={{ color:"#444", margin:0, fontSize:12, fontFamily:"sans-serif", lineHeight:1.55 }}>{r.desc}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <p style={{ color:"#32324d", fontSize:9, fontFamily:"sans-serif", margin:"22px 0 12px", letterSpacing:2.5, textTransform:"uppercase" }}>Categories</p>
+      <div style={{ background:"rgba(255,255,255,.04)", border:"1px solid rgba(255,255,255,.06)", borderRadius:18, padding:"16px 18px" }}>
+        <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
+          {CATEGORIES.map(c=>(
+            <div key={c.id} style={{ background:`${c.color}22`, border:`1px solid ${c.color}44`, borderRadius:10, padding:"6px 12px", display:"flex", alignItems:"center", gap:6 }}>
+              <span>{c.icon}</span><span style={{ color:c.color, fontSize:12, fontFamily:"sans-serif" }}>{c.label}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ marginTop:24, background:"rgba(220,38,38,.07)", border:"1px solid rgba(220,38,38,.15)", borderRadius:18, padding:"16px 18px" }}>
+        <p style={{ color:"#32324d", margin:"0 0 10px", fontSize:9, fontFamily:"sans-serif", letterSpacing:2.5, textTransform:"uppercase" }}>Danger Zone</p>
+        <button onClick={handleClearEntries} style={{ background:"none", border:"1px solid rgba(220,38,38,.3)", borderRadius:12, padding:"10px 18px", color:"#f87171", fontSize:13, fontFamily:"sans-serif", cursor:"pointer" }}>
+          Delete All Entries
+        </button>
+      </div>
+
+      <div style={{ marginTop:24, textAlign:"center" }}>
+        <p style={{ color:"#1e1e35", fontSize:10, fontFamily:"sans-serif", margin:0 }}>Add to Home Screen for the full app experience</p>
+      </div>
+    </div>
+  );
+}
+
+// ── Mount ──
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<CalenStar />);
+</script>
+</body>
+</html>
